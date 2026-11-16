@@ -4,6 +4,10 @@
 
 **A hand-written, tool-using LLM agent that answers questions about German day-ahead electricity prices, finds the cheapest time to run an appliance, and estimates what that run costs on the wholesale market.**
 
+[![Try the live app](https://img.shields.io/badge/Live%20demo-smard--ai.streamlit.app-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://smard-ai.streamlit.app/)
+
+**[Try it live → smard-ai.streamlit.app](https://smard-ai.streamlit.app/)**: ask the agent a question in your browser and watch which tools it calls. No setup needed.
+
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-Qwen3.5--4B-4B8BBE)
 ![NVIDIA NIM](https://img.shields.io/badge/NVIDIA%20NIM-Nemotron-76B900?logo=nvidia&logoColor=white)
