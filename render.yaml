@@ -1,0 +1,23 @@
+# Render Blueprint: the FastAPI backend only. The React frontend is deployed separately (Vercel).
+# Create it with: Render dashboard -> New -> Blueprint -> pick this repository.
+services:
+  - type: web
+    name: energy-agent-api
+    runtime: python
+    plan: free
+    region: frankfurt            # change to the region closest to your users
+    buildCommand: pip install -r requirements.txt
+    # One process on purpose: running jobs and their replayable event logs live in memory.
+    startCommand: python -m uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: LLM_PROVIDER
+        value: nvidia
+      - key: PRICE_SOURCE
+        value: smard
+      - key: NVIDIA_API_KEY
+        sync: false              # secret: you are asked for it in the dashboard, never stored in git
+      - key: CHAT_CORS_ORIGINS
+        sync: false              # your Vercel origin, e.g. https://your-app.vercel.app (no trailing slash)

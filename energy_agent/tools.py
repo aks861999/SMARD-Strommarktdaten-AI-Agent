@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 
-from .sources import HourlyPrice, PriceSource
+from .sources import BERLIN, HourlyPrice, PriceSource
+
+
+def _epoch(timestamp: datetime) -> int:
+    """Return absolute epoch seconds so DST shifts never masquerade as extra hours."""
+    return int(timestamp.timestamp())
+
+
+def _day_hours(target_date: date) -> int:
+    """Length of a Berlin calendar day in hours: 23, 24 or 25 around DST changes."""
+    start = datetime.combine(target_date, time.min, tzinfo=BERLIN)
+    end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=BERLIN)
+    return int((end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() // 3600)
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -127,14 +139,15 @@ class EnergyTools:
 
     def get_hourly_prices(self, date: str, region: str = "DE-LU") -> dict[str, Any]:
         target_date, prices = self._load(date, region)
+        expected_hours = _day_hours(target_date)
         return {
             "date": target_date.isoformat(),
             "region": region,
             "source": self._source_name(self.price_source),
             "unit": "EUR/MWh",
             "available_hours": len(prices),
-            "expected_hours": 24,
-            "status": "complete" if len(prices) == 24 else "partial_or_unavailable",
+            "expected_hours": expected_hours,
+            "status": "complete" if len(prices) == expected_hours else "partial_or_unavailable",
             "records": [item.as_dict() for item in prices],
             "note": (
                 "Demo values are synthetic and are not real market observations."
@@ -167,7 +180,8 @@ class EnergyTools:
             "maximum_at": most_expensive,
             "range_eur_mwh": round(max_value - min_value, 2),
             "population_std_dev_eur_mwh": round(statistics.pstdev(values), 2) if len(values) > 1 else 0.0,
-            "status": "complete" if len(values) == 24 else "partial_data",
+            "expected_hours": _day_hours(target_date),
+            "status": "complete" if len(values) == _day_hours(target_date) else "partial_data",
         }
 
     def find_cheapest_window(
@@ -189,21 +203,16 @@ class EnergyTools:
         candidates: list[tuple[float, list[HourlyPrice]]] = []
         for index in range(0, len(prices) - duration_hours + 1):
             window = prices[index : index + duration_hours]
-            start = window[0].timestamp
-            end_exclusive = window[-1].timestamp + timedelta(hours=1)
-            if start.date() != target_date:
+            # A one-day, consecutive window: every observation must fall on the
+            # requested local date and inside the requested local-hour bounds.
+            if any(item.timestamp.date() != target_date for item in window):
                 continue
-            if start.hour < earliest_hour or end_exclusive.date() != target_date and latest_hour != 24:
+            if any(not (earliest_hour <= item.timestamp.hour < latest_hour) for item in window):
                 continue
-            # Keep the search inside the requested daily time boundaries.
-            if end_exclusive.hour > latest_hour and not (latest_hour == 24 and end_exclusive.hour == 0):
-                continue
-            if end_exclusive.hour == 0 and latest_hour != 24:
-                continue
-            expected = [start + timedelta(hours=offset) for offset in range(duration_hours)]
-            if any(window[offset].timestamp != expected[offset] for offset in range(duration_hours)):
-                continue
-            if any(item.timestamp.hour >= latest_hour for item in window):
+            # Consecutiveness is checked in absolute time, so the two 02:00 hours on
+            # the autumn DST day are both valid and the skipped spring hour is not.
+            if any(_epoch(window[offset + 1].timestamp) - _epoch(window[offset].timestamp) != 3600
+                   for offset in range(duration_hours - 1)):
                 continue
             average_price = statistics.mean(item.price_eur_mwh for item in window)
             candidates.append((average_price, window))
@@ -255,9 +264,11 @@ class EnergyTools:
         if not matching:
             return {"date": target_date.isoformat(), "status": "missing_start_hour", "message": "No price is available for the requested start hour."}
         start = matching[0].timestamp
-        expected = [start + timedelta(hours=offset) for offset in range(duration_hours)]
-        by_timestamp = {item.timestamp: item for item in prices}
-        selected = [by_timestamp.get(timestamp) for timestamp in expected]
+        # Step through absolute hours rather than adding a wall-clock timedelta:
+        # on DST days the local hour labels repeat or skip, the absolute hour does not.
+        by_epoch = {_epoch(item.timestamp): item for item in prices}
+        start_epoch = _epoch(start)
+        selected = [by_epoch.get(start_epoch + 3600 * offset) for offset in range(duration_hours)]
         if any(item is None for item in selected):
             return {"date": target_date.isoformat(), "status": "incomplete_window", "message": "Not enough consecutive hourly prices are available to calculate this cost."}
 

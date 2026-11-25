@@ -49,8 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-steps",
         type=int,
-        default=8,
-        help="Maximum LLM/tool iterations.",
+        default=int(os.getenv("AGENT_MAX_STEPS", "0")),
+        help="Optional maximum LLM/tool iterations; 0 disables the count limit (runtime limit still applies).",
+    )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=int,
+        default=int(os.getenv("AGENT_MAX_RUNTIME_SECONDS", "900")),
+        help="Runtime safety limit in seconds; 0 disables the runtime limit.",
     )
     return parser.parse_args()
 
@@ -82,7 +88,12 @@ def main() -> int:
 
     price_source = DemoPriceSource() if args.data == "demo" else SmardPriceSource()
     tools = EnergyTools(price_source=price_source)
-    agent = Agent(llm=llm, tools=tools, max_steps=args.max_steps, verbose=True)
+    agent = Agent(
+        llm=llm, tools=tools,
+        max_steps=args.max_steps or None,
+        max_runtime_seconds=args.max_runtime_seconds or None,
+        verbose=True,
+    )
 
     print("\nENERGY PRICE PLANNING AGENT")
     if args.provider == "nvidia":
@@ -96,6 +107,7 @@ def main() -> int:
         print("NOTICE: demo prices are synthetic; they are not live market observations.")
     print("Type 'exit' to quit.\n")
 
+    carried_state: dict | None = None
     while True:
         try:
             user_query = input("You: ").strip()
@@ -110,8 +122,13 @@ def main() -> int:
             continue
 
         try:
-            answer = agent.run(user_query)
+            answer, a2ui_messages = agent.run(user_query, prior_state=carried_state)
+            carried_state = agent.last_turn_state
             print(f"\nAgent: {answer}\n")
+            if a2ui_messages:
+                import json
+                print(f"[A2UI] {len(a2ui_messages)} validated UI message(s):")
+                print(json.dumps(a2ui_messages, indent=2, ensure_ascii=False))
         except Exception as exc:
             print(f"\nApplication error: {exc}", file=sys.stderr)
             if args.provider == "nvidia":

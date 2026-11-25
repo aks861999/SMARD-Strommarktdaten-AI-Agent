@@ -1,0 +1,20 @@
+{
+  "catalog_id": "urn:energy-agent:chat-genui:catalog:v1",
+  "protocol": "A2UI v0.9 message subset",
+  "renderer": "project-owned React chat renderer",
+  "components": {
+    "Text": { "props": ["text", "variant"], "variants": ["body", "caption", "heading", "title", "code"] },
+    "Column": { "props": ["children"] },
+    "Row": { "props": ["children"] },
+    "Card": { "props": ["child", "title"] },
+    "Metric": { "props": ["label", "value", "detail"] },
+    "Chart": { "props": ["title", "chart_type", "x_key", "series", "data"], "chart_types": ["line", "bar", "area", "scatter"] },
+    "DataTable": { "props": ["title", "columns", "rows"] },
+    "List": { "props": ["items"] },
+    "Slider": { "props": ["label", "min", "max", "step", "value", "unit"], "interaction": "local-only" },
+    "Calculator": { "props": ["title", "operation", "fields", "output_label", "output_unit"], "operations": ["energy_cost", "multiply", "add", "subtract", "divide", "percentage"], "interaction": "local-only" },
+    "AskAgentButton": { "props": ["label", "action", "prompt"], "actions": ["ask_agent"] },
+    "Callout": { "props": ["title", "text", "tone"], "tones": ["info", "success", "warning", "error"] }
+  },
+  "limits": { "max_components": 36, "max_depth": 5, "max_chart_points": 100, "max_table_rows": 80 }
+}

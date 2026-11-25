@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0,<9
+# Needed by starlette.testclient (tests/test_api.py); not needed at runtime.
+httpx2>=2.0.0,<3

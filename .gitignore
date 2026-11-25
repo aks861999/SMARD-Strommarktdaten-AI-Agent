@@ -1,7 +1,30 @@
 .venv/
 __pycache__/
+examples/
 .pytest_cache/
 *.py[cod]
+# Secrets: any .env variant stays out, only the template is tracked
 .env
+.env.*
+!.env.example
+
+# Large or generated, not source
 models/
+video/
 presentation/
+
+# Frontend build output and local settings
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+*.tsbuildinfo
+
+# Tool / editor / OS noise
+.claude/settings.local.json
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+.coverage
+htmlcov/

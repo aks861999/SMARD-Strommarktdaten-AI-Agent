@@ -47,6 +47,40 @@ def test_estimate_wholesale_run_cost():
     assert result["estimated_wholesale_energy_cost_eur"] == 0.144
 
 
+def test_dst_days_report_the_real_number_of_hours():
+    tools = make_tools()
+    spring = tools.get_hourly_prices("2026-03-29")   # clocks jump 02:00 -> 03:00
+    autumn = tools.get_hourly_prices("2026-10-25")   # 02:00 occurs twice
+    assert (spring["expected_hours"], spring["available_hours"], spring["status"]) == (23, 23, "complete")
+    assert (autumn["expected_hours"], autumn["available_hours"], autumn["status"]) == (25, 25, "complete")
+
+
+def test_estimate_run_cost_spans_spring_forward_correctly():
+    # 01:00 + 3 absolute hours covers 01:00, 03:00 and 04:00 local time.
+    result = make_tools().estimate_run_cost(
+        date="2026-03-29", start_hour=1, duration_hours=3, power_kw=1,
+    )
+    assert result["status"] == "ok"
+    assert len(result["hourly_prices_eur_mwh"]) == 3
+
+
+def test_estimate_run_cost_uses_both_repeated_autumn_hours():
+    # 01:00 + 3 absolute hours covers 01:00 CEST, 02:00 CEST and 02:00 CET.
+    result = make_tools().estimate_run_cost(
+        date="2026-10-25", start_hour=1, duration_hours=3, power_kw=1,
+    )
+    assert result["status"] == "ok"
+    assert len(result["hourly_prices_eur_mwh"]) == 3
+
+
+def test_cheapest_window_is_found_on_dst_day():
+    result = make_tools().find_cheapest_window(
+        date="2026-10-25", duration_hours=2, earliest_hour=0, latest_hour=24,
+    )
+    assert result["status"] == "ok"
+    assert result["start_hour"] in range(0, 24)
+
+
 def test_quarterhour_aggregation_requires_four_values_per_hour():
     from energy_agent.sources import SmardPriceSource
 

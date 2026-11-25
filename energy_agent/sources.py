@@ -48,16 +48,21 @@ class DemoPriceSource:
         if region != "DE-LU":
             raise ValueError("The demo dataset only supports the DE-LU bidding zone.")
 
+        # Walk the local day in absolute hours so DST days return 23 or 25 rows
+        # instead of a hard-coded 24. The synthetic price is keyed by local hour.
+        by_hour = {int(row["hour"]): float(row["price_eur_mwh"]) for row in self._rows}
+        local_start = datetime.combine(target_date, time.min, tzinfo=BERLIN)
+        start_utc = local_start.astimezone(timezone.utc)
+        end_utc = (local_start + timedelta(days=1)).astimezone(timezone.utc)
+
         results: list[HourlyPrice] = []
-        for row in self._rows:
-            hour = int(row["hour"])
-            local_timestamp = datetime.combine(target_date, time(hour=hour), tzinfo=BERLIN)
-            results.append(
-                HourlyPrice(
-                    timestamp=local_timestamp,
-                    price_eur_mwh=float(row["price_eur_mwh"]),
-                )
-            )
+        cursor = start_utc
+        while cursor < end_utc:
+            local_timestamp = cursor.astimezone(BERLIN)
+            price = by_hour.get(local_timestamp.hour)
+            if price is not None:
+                results.append(HourlyPrice(timestamp=local_timestamp, price_eur_mwh=price))
+            cursor += timedelta(hours=1)
         return results
 
 

@@ -1,0 +1,94 @@
+# CLAUDE.md — Energy Price Planning Agent
+
+Tool-using agent for the German DE-LU day-ahead electricity market. FastAPI + SSE backend
+(`api.py`, `energy_agent/`) and a React chat frontend (`frontend/`). See `README.md` for setup.
+
+## Commands
+
+```powershell
+pip install -r requirements-dev.txt                   # runtime + test deps (requirements.txt = runtime only, used by Render)
+python -m pytest -q                                   # backend tests (tests/test_api.py needs httpx2)
+python -m uvicorn api:app --host 127.0.0.1 --port 8000
+cd frontend; npm run dev                              # http://127.0.0.1:5173
+cd frontend; npx tsc --noEmit                         # typecheck
+```
+
+## Rule #1 — Keep the system general (no overfitting)
+
+The agent must answer **any** question inside its domain (prices on a day, price pattern, cheapest
+window, wholesale run cost), not one demo question. Never tune the system to a single prompt.
+
+- **Do not** put a specific user question, calendar date, appliance, power rating or clock window
+  (e.g. "2 kW washing machine, 16 November, 18:00–21:00") into the system prompt, tool schemas,
+  UI-planner prompt, starter suggestions, defaults or frontend code.
+- **Do not** add keyword/regex routing, per-question `if` branches, or canned answers. Fix
+  behaviour by improving the general prompt rule, the tool description, or the tool's validation.
+- **Do not** make a test pass by special-casing its input. Tests may use fixed dates/values as
+  *fixtures* in `tests/`, but runtime code must never reference them.
+- The model resolves relative dates ("tomorrow") from the current Berlin date injected in
+  `Agent._system_message`; never hard-code "today".
+- Starter suggestions in `ChatApp.tsx` only prefill the input. Keep them few, varied in intent, and
+  free of fixed dates. One is deliberately a multi-step request ("Detailed price analysis") so the
+  agent's multi-tool reasoning stays easy to demo; keep it relative ("tomorrow") and appliance-neutral.
+- `tests/test_agent_architecture.py` contains an overfitting guard that scans prompts, tool schemas
+  and `frontend/src` for fixed dates, appliances and clock windows. If it fails, remove the
+  hard-coded content — do not loosen the regexes.
+- Verify changes against **varied** phrasings and intents (different dates, durations, appliances,
+  follow-ups, missing inputs, out-of-domain questions), not just the one you are debugging.
+
+## Agentic best practices followed here
+
+Sources: Anthropic, [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+and [Writing tools for agents](https://anthropic.com/engineering/writing-tools-for-agents);
+OpenAI, [A practical guide to building agents](https://openai.com/business/guides-and-resources/a-practical-guide-to-building-ai-agents/).
+
+1. **Simplest thing that works.** Plain LLM + tool loop, no agent framework. Add complexity only
+   when an evaluation shows it is needed.
+2. **Tools are an interface to design (ACI).** Clear names, precise parameter docs and bounds,
+   explicit units (EUR/MWh), mistake-proof arguments (`enum`, `minimum`/`maximum`), actionable error
+   results. Unsupported or unknown arguments are rejected in `Agent._execute_tool`.
+3. **Ground truth every step.** Numbers come from tool results (SMARD or labelled demo data), never
+   from the model. Missing data is reported, not estimated. State the wholesale-only limitation.
+4. **Stopping conditions and guardrails.** Runtime limit (`AGENT_MAX_RUNTIME_SECONDS`), optional
+   step ceiling, duplicate-tool-call caching, bounded concurrency, cancellation.
+5. **Transparency.** The collapsed "Behind the scenes" trace shows decisions, tool arguments and
+   observations. Provider `reasoning_content` is never sent to the client.
+6. **Untrusted model output is validated.** The UI planner emits JSON only; `genui.py` enforces the
+   catalog, size and depth limits. Never render model-generated HTML/JS. UI is optional and its
+   failure must never discard a finished text answer.
+7. **Bounded, explicit memory.** The last **10 question/answer exchanges (20 messages)** are always
+   sent (`MAX_HISTORY_TURNS` in `agent.py`, mirrored by `HISTORY_TURNS` in `ChatApp.tsx`), with
+   per-message and total character budgets that drop the oldest first. There is no opt-out toggle.
+   Resolved slots are carried separately as small, typed, validated state.
+8. **Progressive delivery.** Stream the finished text first, append optional UI afterwards. Do not
+   make a complete answer wait on an optional second model call.
+9. **Evaluate, don't eyeball.** Prefer adding a general regression test or eval case over a one-off
+   prompt tweak. Keep a held-out set of varied questions separate from the ones used to tune prompts.
+
+## Architecture rules
+
+- **LLM provider is backend-only.** Chosen by `LLM_PROVIDER` (default `nvidia`). The dashboard has
+  no provider selector and the API ignores a client-supplied `provider`. Do not re-add one.
+- **One history limit.** `MAX_HISTORY_MESSAGES` in `energy_agent/agent.py` is imported by `api.py`;
+  change it in one place and keep `HISTORY_TURNS` in the frontend in sync.
+- Do not stream tool-iteration text to the chat; only the final no-tool answer is shown.
+- **Keep the UI mobile friendly.** Below 760px the sidebar is hidden and "New chat" lives in the top bar;
+  text fields are 16px (iOS zooms into anything smaller); touch targets are about 40px or more; wide
+  tables scroll sideways inside their box instead of widening the page; safe-area insets pad notches.
+  On touch devices Enter adds a new line and the button sends. Check a change at 390px and 320px wide.
+- Adding a UI component means updating `catalog.json`, `genui.py` validation, `ui_tree_to_a2ui`,
+  `frontend/src/renderer.tsx`, and tests together.
+- **Deployment:** backend on Render free tier (`render.yaml`), frontend on Vercel; see the README
+  "Deployment" section. Keep a single uvicorn process (job state is in memory). Keep
+  `requirements.txt` runtime-only; test packages go in `requirements-dev.txt`. The frontend must
+  retry the initial POST (not the resume endpoint) until the server has accepted the job.
+- Never commit or print `.env` (it holds `NVIDIA_API_KEY`). Use `.env.example` for new settings.
+- Local-development codebase: no auth or durable storage. Keep the API bound to localhost.
+
+## Known overfitting risks to watch
+
+- `Agent._merge_state` carries slots (`date`, `power_kw`, `duration_hours`, …) between turns. This
+  is general, but a stale slot can leak into an unrelated question. The prompt tells the model to
+  reuse state only for follow-ups; if leakage shows up, tighten that rule rather than special-casing.
+- `presentation/` (git-ignored) and `examples/sample_dynamic_ui_plan.json` are illustrations of one
+  scenario. They are not runtime inputs; do not copy their wording into prompts.
