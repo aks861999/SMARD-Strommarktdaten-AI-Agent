@@ -11,13 +11,16 @@ from dotenv import load_dotenv
 
 from energy_agent.agent import Agent
 from energy_agent.llm import LlamaCppServerLLM, NvidiaNIMLLM
-from energy_agent.sources import DemoPriceSource, SmardPriceSource
+from energy_agent.sources import local_price_source
 from energy_agent.tools import EnergyTools
 
 
-# Load the project-root .env without overriding variables already set by the OS.
-PROJECT_ROOT = Path(__file__).resolve().parent
-load_dotenv(PROJECT_ROOT / ".env")
+# Load .env without overriding variables already set by the OS: first this service's own .env
+# (services/api/.env), then the repository root's, the one docker compose also reads. Inside a container
+# there is no parent folder and no .env at all: the settings arrive as environment variables.
+HERE = Path(__file__).resolve().parent
+for env_dir in (HERE, *HERE.parents[1:2]):
+    load_dotenv(env_dir / ".env")
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,7 +89,7 @@ def main() -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
-    price_source = DemoPriceSource() if args.data == "demo" else SmardPriceSource()
+    price_source = local_price_source(args.data)
     tools = EnergyTools(price_source=price_source)
     agent = Agent(
         llm=llm, tools=tools,

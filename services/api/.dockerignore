@@ -1,0 +1,11 @@
+# Keep secrets, tests and caches out of the image
+.env*
+*.env
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+examples/
+*.md
+Dockerfile
+.dockerignore

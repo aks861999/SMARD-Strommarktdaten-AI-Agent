@@ -6,9 +6,11 @@ services:
     runtime: python
     plan: free
     region: frankfurt            # change to the region closest to your users
-    buildCommand: pip install -r requirements.txt
+    # Render builds the whole repository and runs the api service from it. PRICES_URL is not set here, so the
+    # api runs the SMARD price code in-process from services/prices (one free service instead of two).
+    buildCommand: pip install -r services/api/requirements.txt
     # One process on purpose: running jobs and their replayable event logs live in memory.
-    startCommand: python -m uvicorn api:app --host 0.0.0.0 --port $PORT
+    startCommand: python -m uvicorn api:app --app-dir services/api --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
@@ -17,6 +19,8 @@ services:
         value: nvidia
       - key: PRICE_SOURCE
         value: smard
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip  # where Render's edge puts the visitor IP (Render does not document it): verify in the logs, see README "Rate limiting"
       - key: NVIDIA_API_KEY
         sync: false              # secret: you are asked for it in the dashboard, never stored in git
       - key: CHAT_CORS_ORIGINS

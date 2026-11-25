@@ -1,0 +1,17 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment and local files
+.env*
+*.env
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker files themselves
+Dockerfile
+.dockerignore

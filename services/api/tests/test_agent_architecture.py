@@ -235,5 +235,5 @@ def test_runtime_prompts_and_tool_schemas_contain_no_question_specific_content(p
 
 @pytest.mark.parametrize("pattern", _OVERFIT_PATTERNS)
 def test_frontend_source_contains_no_question_specific_content(pattern):
-    for path in (_ROOT / "frontend" / "src").glob("*.ts*"):
+    for path in (_ROOT.parent / "webapp" / "src").glob("*.ts*"):
         assert re.search(pattern, path.read_text(encoding="utf-8"), flags=re.I) is None, path.name

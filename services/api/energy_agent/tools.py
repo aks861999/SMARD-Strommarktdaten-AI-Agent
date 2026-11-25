@@ -3,22 +3,15 @@
 from __future__ import annotations
 
 import statistics
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
-from .sources import BERLIN, HourlyPrice, PriceSource
+from .sources import HourlyPrice, PriceSource, day_hours as _day_hours
 
 
 def _epoch(timestamp: datetime) -> int:
     """Return absolute epoch seconds so DST shifts never masquerade as extra hours."""
     return int(timestamp.timestamp())
-
-
-def _day_hours(target_date: date) -> int:
-    """Length of a Berlin calendar day in hours: 23, 24 or 25 around DST changes."""
-    start = datetime.combine(target_date, time.min, tzinfo=BERLIN)
-    end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=BERLIN)
-    return int((end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() // 3600)
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -135,6 +128,10 @@ class EnergyTools:
 
     @staticmethod
     def _source_name(source: PriceSource) -> str:
+        # A source that fetches remotely (HttpPriceSource) reports what the service told it.
+        label = getattr(source, "source_label", None)
+        if label:
+            return label
         return "synthetic_demo_data" if source.__class__.__name__ == "DemoPriceSource" else "SMARD"
 
     def get_hourly_prices(self, date: str, region: str = "DE-LU") -> dict[str, Any]:
@@ -207,6 +204,7 @@ class EnergyTools:
             # requested local date and inside the requested local-hour bounds.
             if any(item.timestamp.date() != target_date for item in window):
                 continue
+            # Keep the search inside the requested daily time boundaries.
             if any(not (earliest_hour <= item.timestamp.hour < latest_hour) for item in window):
                 continue
             # Consecutiveness is checked in absolute time, so the two 02:00 hours on

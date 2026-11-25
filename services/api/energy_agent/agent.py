@@ -1,4 +1,7 @@
-"""Tool-using energy agent with streaming events and optional dynamic chat UI."""
+"""The LLM-driven observe -> decide -> act loop.
+
+A tool-using energy agent that emits streaming events and can add an optional dynamic chat UI.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -62,6 +65,8 @@ class Agent:
     def __init__(self, llm: Any, tools: EnergyTools, max_steps: int | None = None,
                  max_runtime_seconds: int | None = 900, verbose: bool = False):
         self.llm, self.tools = llm, tools
+        # max_steps: optional ceiling on the number of iterations (one iteration = one LLM call). None, the
+        # default, means no count limit; max_runtime_seconds still bounds the run.
         self.max_steps = max_steps if max_steps and max_steps > 0 else None
         self.max_runtime_seconds = max_runtime_seconds if max_runtime_seconds and max_runtime_seconds > 0 else None
         self.verbose = verbose
@@ -190,6 +195,10 @@ class Agent:
             prior_state: dict[str, Any] | None = None) -> tuple[str, list[dict]]:
         now = datetime.now(ZoneInfo("Europe/Berlin"))
         self.last_turn_state = self._normalize_state(prior_state)
+        # 'messages' is the list of messages that is sent to the LLM on every call. Each message is a dictionary
+        # with a 'role' and 'content'. The first time through the loop it holds the system prompt, the earlier
+        # conversation (at most the last 10 question/answer pairs) and the user query; the model's tool requests
+        # and the tool observations are appended as the loop goes on.
         messages = [{"role": "system", "content": self._system_message(now)}]
         messages.extend(self._history_messages(conversation_context))
         messages.append({"role": "user", "content": user_query})
@@ -236,8 +245,11 @@ class Agent:
                 "raw_assistant_message": self._public_message(raw_assistant_message),
             })
             if response.raw_assistant_message:
+                # The assistant's message may contain content and tool calls.
+                # We append it to the messages list for the next iteration.
                 messages.append(response.raw_assistant_message)
 
+            # if the model did not return any tool calls, we assume it has generated a final answer and we return it.
             if not response.tool_calls:
                 # The model's no-tool response is the answer. Generating it exactly
                 # once avoids a second full answer call and the risk of the two
@@ -271,6 +283,8 @@ class Agent:
                 self._emit(on_event, {"type": "turn_state", "state": self.last_turn_state})
                 return answer, ui_messages
 
+            # there can be multiple tool calls in a single assistant message. For each tool call, we execute the
+            # corresponding tool function and append the observation to the messages list for the next iteration.
             for call in response.tool_calls:
                 if cancel_event is not None and cancel_event.is_set():
                     self._emit(on_event, {"type": "status", "status": "Stopped by user"})
@@ -288,7 +302,7 @@ class Agent:
                 else:
                     try:
                         result = self._execute_tool(call.name, call.arguments)
-                    except Exception as exc:
+                    except Exception as exc:  # Send controlled tool errors back as observations.
                         result = {"status": "tool_error", "tool": call.name, "error": str(exc)}
                     executed[key] = result
                     # Keep the evidence set unique so the UI planner is not fed duplicates.
@@ -300,6 +314,9 @@ class Agent:
                     "arguments": call.arguments, "result": result,
                     "deduplicated": deduplicated,
                 })
+                # The observation must reference the exact assistant tool call (tool_call_id). Up to this point,
+                # every tool call and its observation is appended to the messages list, so that the next
+                # iteration of the agent can use it to decide the next action.
                 messages.append({"role": "tool", "content": self._json_safe(result),
                                "tool_call_id": call.call_id})
 
@@ -316,6 +333,7 @@ class Agent:
             raise ValueError(f"Tool '{name}' is not registered. Available tools: {', '.join(self.tools.functions)}")
         if not isinstance(arguments, dict):
             raise TypeError("Tool arguments must be a JSON object.")
+        # Reject unknown keys rather than silently accepting model-generated arguments.
         import inspect
         allowed = set(inspect.signature(function).parameters)
         unknown = set(arguments) - allowed

@@ -1,4 +1,8 @@
-"""OpenAI-compatible adapters with SSE streaming and normalized tool-call handling."""
+"""LLM adapters for local llama.cpp and hosted NVIDIA NIM.
+
+Both speak the OpenAI-compatible chat-completions API. The reply is read as an SSE stream (`_stream_chat`) and
+converted to the project's own types (`_normalize_message`), so the agent never sees provider details.
+"""
 from __future__ import annotations
 import json
 import os
@@ -9,21 +13,77 @@ import requests
 
 @dataclass
 class ToolCall:
+    """A normalized tool call returned by the model.
+
+    one example is like this data structure:
+    {
+        "name": "get_hourly_prices",
+        "arguments": {
+            "date": "2024-06-01",
+            "region": "DE-LU"
+        },
+        "call_id": "call_0_0"
+    }
+    """
+
+    # name of the tool to call, e.g., "get_hourly_prices"
     name: str
+
+    # arguments for the tool call, e.g., {"date": "2024-06-01", "region": "DE-LU"}
+    # these are basically the parameters or arguments, the function 'get_hourly_prices' expects
+    # to receive to perform a certain task
+    #
+    # dictionary of key-value pairs where keys are argument names and values are argument values.
     arguments: dict[str, Any]
+
+    # unique identifier for the tool call
     call_id: str
 
 
 @dataclass
 class LLMResponse:
+    """Provider-independent response consumed by the agent loop."""
+
     content: str
     tool_calls: list[ToolCall]
     raw_assistant_message: dict[str, Any]
 
 
 def _normalize_message(message: dict, messages: list[dict], provider: str) -> LLMResponse:
+    """Convert an OpenAI-style assistant message to project types.
+
+    Both llama.cpp and NVIDIA NIM describe the assistant's turn as one message with `content`, optional
+    `tool_calls` and, for some models, `reasoning_content`. `_stream_chat` assembles that message from the
+    streamed chunks; this helper keeps provider-specific HTTP handling separate from the agent's
+    provider-independent response format.
+    """
+    # How does such a message look like?
+    # {
+    #     "role": "assistant",
+    #     "content": "The energy price in DE-LU on 2024-06-01 is 0.25 EUR/kWh.",
+    #     "tool_calls": [
+    #         {
+    #             "id": "call_0_0",
+    #             "type": "function",
+    #             "function": {
+    #                 "name": "get_hourly_prices",
+    #                 "arguments": "{\"date\": \"2024-06-01\", \"region\": \"DE-LU\"}"
+    #             }
+    #         },
+    #         {
+    #             "id": "call_0_1",
+    #             "type": "function",
+    #             "function": {
+    #                 "name": "get_hourly_prices",
+    #                 "arguments": "{\"date\": \"2024-06-02\", \"region\": \"DE-LU\"}"
+    #             }
+    #         }
+    #     ]
+    # }
     content = message.get("content")
     content = content if isinstance(content, str) else ""
+
+    # The model may return multiple tool calls in a single response (the two in the example above).
     tool_calls, raw_calls = [], []
     for index, item in enumerate(message.get("tool_calls") or []):
         if not isinstance(item, dict):
@@ -32,6 +92,9 @@ def _normalize_message(message: dict, messages: list[dict], provider: str) -> LL
         name = fn.get("name")
         if not name:
             raise ValueError(f"{provider} tool call missing function name.")
+        # we need to convert the arguments from an encoded JSON string to a dictionary
+        # because the server returns the arguments as a JSON string,
+        # but for Argument Unpacking, we need it as a dictionary to pass to the tool function.
         raw_args = fn.get("arguments", {})
         try:
             args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
@@ -39,11 +102,16 @@ def _normalize_message(message: dict, messages: list[dict], provider: str) -> LL
             raise ValueError(f"{provider} returned invalid arguments for {name}") from exc
         if not isinstance(args, dict):
             raise ValueError(f"{provider} arguments for {name} must be an object.")
+        # The tool result must carry this same ID when it is sent back to the model.
         call_id = item.get("id") or f"call_{len(messages)}_{index}"
+        # we need to convert the arguments dictionary back to a JSON string because the server
+        # expects the arguments to be in JSON format when they are sent back to the model.
         args_json = json.dumps(args, ensure_ascii=False)
         tool_calls.append(ToolCall(name, args, call_id))
         raw_calls.append({"id": call_id, "type": "function",
                          "function": {"name": name, "arguments": args_json}})
+    # Keep standard OpenAI message fields. Nemotron may return reasoning_content;
+    # preserve it so the provider receives the complete assistant turn next time.
     raw_message = {"role": "assistant", "content": content or None}
     if message.get("reasoning_content"):
         raw_message["reasoning_content"] = message["reasoning_content"]
@@ -54,7 +122,13 @@ def _normalize_message(message: dict, messages: list[dict], provider: str) -> LL
 
 def _stream_chat(session: requests.Session, url: str, payload: dict, timeout: float,
                  provider: str, on_text_delta: Callable[[str], None] | None = None) -> LLMResponse:
-    """Read SSE chunks, concatenate partial tool arguments, and stream visible text."""
+    """Read SSE chunks, concatenate partial tool arguments, and stream visible text.
+
+    Each `data:` line is a small JSON chunk whose choices[0].delta carries one piece of the reply: some
+    `content` text, some `reasoning_content`, or a fragment of a tool call (`tool_calls[index]`: the id, the
+    name, and the `arguments` JSON string arriving a few characters at a time). The pieces are joined per
+    index, and the finished message is handed to `_normalize_message`.
+    """
     payload = {**payload, "stream": True}
     content_parts, reasoning_parts = [], []
     calls: dict[int, dict] = {}
@@ -112,6 +186,13 @@ def _stream_chat(session: requests.Session, url: str, payload: dict, timeout: fl
 
 
 class LlamaCppServerLLM:
+    """Connect to a local llama.cpp server through its OpenAI-compatible API.
+
+    For local llama.cpp deployments, start the llama-server separately with the GGUF model loaded and --jinja
+    enabled. The server handles model inference; this class only sends chat messages and tool schemas, then
+    normalizes the returned OpenAI-style tool calls.
+    """
+
     def __init__(self, model="Qwen3.5-4B", base_url="http://127.0.0.1:8080/v1",
                  timeout: float = 300.0):
         self.model, self.base_url = model, base_url.rstrip("/")
@@ -123,7 +204,18 @@ class LlamaCppServerLLM:
         payload = {"model": self.model, "messages": messages,
                    "temperature": 0 if temperature is None else temperature, "max_tokens": 1200}
         if tools:
-            payload.update({"tools": tools, "tool_choice": "auto", "parallel_tool_calls": True})
+            payload.update({
+                "tools": tools,
+                # "tool_choice": "auto" -->> This tells the OpenAI-compatible API that the model can decide whether to:
+                #     - Generate a normal textual response.
+                #     - Request one of the available tools.
+                # Meaning, the model can name one or more required tools and provide the necessary arguments for
+                # them, or just generate a normal textual response without calling any tool.
+                "tool_choice": "auto",
+                # when the LLM supports multiple tool calls in parallel, you will see it return several tool calls
+                # in a single response. The agent then executes them one after another (see agent.py).
+                "parallel_tool_calls": True,
+            })
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         try:
@@ -134,6 +226,12 @@ class LlamaCppServerLLM:
 
 
 class NvidiaNIMLLM:
+    """Connect to NVIDIA-hosted Nemotron through the NVIDIA NIM API.
+
+    The API key is read from NVIDIA_API_KEY. It is sent only in the HTTP
+    Authorization header and is never included in the request body or logs.
+    """
+
     DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
     DEFAULT_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
 
@@ -158,6 +256,8 @@ class NvidiaNIMLLM:
                   "top_p": 0.95, "max_tokens": self.max_tokens,
                   "reasoning_effort": self.reasoning_effort}
         if tools:
+            # parallel_tool_calls False: the model asks for one tool per reply, so a multi-step question takes one
+            # round (one LLM call) per tool.
             payload.update({"tools": tools, "tool_choice": "auto", "parallel_tool_calls": False})
         if json_mode:
             payload["response_format"] = {"type": "json_object"}

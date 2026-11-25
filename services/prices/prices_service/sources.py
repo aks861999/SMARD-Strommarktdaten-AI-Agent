@@ -1,4 +1,6 @@
-"""Price-data sources: a deterministic local demo source and the SMARD API."""
+"""Price-data sources: a deterministic local demo source and the SMARD API.
+
+Owned by the prices service. The agent API never imports this in a container; it asks the service over HTTP."""
 
 from __future__ import annotations
 
@@ -34,6 +36,13 @@ class HourlyPrice:
 class PriceSource(Protocol):
     def get_prices(self, target_date: date, region: str = "DE-LU") -> list[HourlyPrice]:
         """Return available hourly prices for one local calendar day."""
+
+
+def day_hours(target_date: date) -> int:
+    """Length of a Berlin calendar day in hours: 23, 24 or 25 around DST changes."""
+    start = datetime.combine(target_date, time.min, tzinfo=BERLIN)
+    end = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=BERLIN)
+    return int((end.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds() // 3600)
 
 
 class DemoPriceSource:

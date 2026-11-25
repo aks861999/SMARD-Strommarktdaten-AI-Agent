@@ -1,0 +1,60 @@
+# Rendered at container start: ${API_URL} and ${WEBAPP_DNS_RESOLVER} come from the environment (envsubst);
+# every nginx variable such as $host is left alone.
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 1m;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+
+    # Resolve the API host at request time, not at nginx startup: the container can start before the API is up,
+    # and a restarted API (new address) is found again instead of nginx keeping the old one.
+    resolver ${WEBAPP_DNS_RESOLVER} valid=10s ipv6=off;
+    set $agent_api ${API_URL};
+
+    # Same origin as the frontend => no CORS needed.
+    location /api/ {
+        proxy_pass $agent_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # SET, not appended: nginx is the edge here, so whatever the client sent is discarded and the API
+        # (CLIENT_IP_HEADER=x-forwarded-for, one trusted proxy) sees only the address nginx observed.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The answer is a live stream (Server-Sent Events): never buffer or cache it, allow long runs.
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # Hashed build files never change, so browsers may keep them for a year.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        try_files $uri $uri/ /index.html;   # SPA fallback
+    }
+}

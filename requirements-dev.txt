@@ -1,4 +1,6 @@
--r requirements.txt
+# Everything needed to run the tests of every service:   pip install -r requirements-dev.txt
+-r services/api/requirements.txt
+-r services/prices/requirements.txt
 pytest>=8.0,<9
-# Needed by starlette.testclient (tests/test_api.py); not needed at runtime.
+# Needed by starlette.testclient (services/api/tests/test_api.py); not needed at runtime.
 httpx2>=2.0.0,<3

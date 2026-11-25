@@ -7,6 +7,18 @@ from energy_agent.agent import MAX_HISTORY_MESSAGES
 client = TestClient(api.app)
 
 
+@pytest.fixture(autouse=True)
+def _no_rate_limits_unless_a_test_asks(monkeypatch):
+    """These tests post several times from one client; limits would make them depend on timing and order."""
+    for name in ("RATE_LIMIT_PER_MINUTE", "RATE_LIMIT_PER_HOUR", "RATE_LIMIT_GLOBAL_PER_HOUR", "RATE_LIMIT_MAX_ACTIVE_PER_IP"):
+        monkeypatch.setenv(name, "0")
+    api._reset_rate_limits()
+    api._JOBS.clear()
+    yield
+    monkeypatch.undo()
+    api._reset_rate_limits()
+
+
 def test_health_route():
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -80,4 +92,24 @@ def test_reusing_a_request_id_for_a_different_payload_is_rejected(monkeypatch):
     assert second.status_code == 409
     # The identical payload is still a valid resume, not a collision.
     resume = client.post("/api/chat", json={"message": "first", "request_id": request_id})
+    assert resume.status_code == 200
+
+
+def test_second_question_within_the_minute_gets_429_with_retry_after(monkeypatch):
+    class QuickAgent:
+        last_turn_state = {}
+        def run(self, query, conversation_context=None, on_event=None, cancel_event=None, prior_state=None):
+            return "ok", []
+
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1")
+    api._reset_rate_limits()
+    monkeypatch.setattr(api, "make_agent", lambda: QuickAgent())
+    first = client.post("/api/chat", json={"message": "one", "request_id": "rl-test-1"})
+    assert first.status_code == 200
+    second = client.post("/api/chat", json={"message": "two", "request_id": "rl-test-2"})
+    assert second.status_code == 429
+    assert int(second.headers["retry-after"]) >= 1
+    assert "wait" in second.json()["detail"].lower()
+    # the same request_id with the same payload is a resume of the first question, not a new one
+    resume = client.post("/api/chat", json={"message": "one", "request_id": "rl-test-1"})
     assert resume.status_code == 200

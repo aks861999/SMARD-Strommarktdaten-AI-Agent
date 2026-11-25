@@ -1,0 +1,74 @@
+services:
+
+  # ── Web: the React app (nginx) ────────────────────────────────
+  # Serves the page and forwards /api to the api service, so the browser only ever talks to this one address.
+  # The only service that publishes a port.
+  webapp:
+    build:
+      context: ./services/webapp
+    ports:
+      - "${WEBAPP_PORT:-8080}:8080"
+    environment:
+      # Read by docker/nginx.conf.template at container start (envsubst).
+      - API_URL=${WEBAPP_API_URL:-http://api:8000}
+      - WEBAPP_DNS_RESOLVER=${WEBAPP_DNS_RESOLVER:-127.0.0.11}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - energy-price-agent
+
+  # ── Agent API ─────────────────────────────────────────────────
+  # The LLM loop, the four tools, the live stream (SSE), rate limiting and the UI planner.
+  # The only service that gets the NVIDIA key. Not published: reachable through webapp only.
+  api:
+    build:
+      context: ./services/api
+    environment:
+      # LLM (hosted NVIDIA NIM). The key comes from .env and is never baked into the image.
+      - LLM_PROVIDER=nvidia
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NEMOTRON_MODEL=${NEMOTRON_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
+      - NEMOTRON_REASONING_EFFORT=${NEMOTRON_REASONING_EFFORT:-low}
+      - NEMOTRON_MAX_TOKENS=${NEMOTRON_MAX_TOKENS:-8192}
+      # Prices come from the prices service (without this the api would fetch them itself)
+      - PRICES_URL=http://prices:8001
+      # Agent limits
+      - AGENT_MAX_STEPS=${AGENT_MAX_STEPS:-0}
+      - AGENT_MAX_RUNTIME_SECONDS=${AGENT_MAX_RUNTIME_SECONDS:-900}
+      - MAX_CONCURRENT_AGENT_RUNS=${MAX_CONCURRENT_AGENT_RUNS:-2}
+      - UI_PLANNER_JSON_MODE=${UI_PLANNER_JSON_MODE:-1}
+      # Rate limiting (0 switches a limit off)
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-6}
+      - RATE_LIMIT_PER_HOUR=${RATE_LIMIT_PER_HOUR:-60}
+      - RATE_LIMIT_GLOBAL_PER_HOUR=${RATE_LIMIT_GLOBAL_PER_HOUR:-300}
+      - RATE_LIMIT_MAX_ACTIVE_PER_IP=${RATE_LIMIT_MAX_ACTIVE_PER_IP:-1}
+      # nginx (webapp) sits in front and sets X-Forwarded-For to the visitor address: trust exactly one proxy.
+      - CLIENT_IP_HEADER=x-forwarded-for
+      - TRUSTED_PROXY_HOPS=1
+    depends_on:
+      prices:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - energy-price-agent
+
+  # ── Prices ────────────────────────────────────────────────────
+  # Hourly day-ahead prices (live SMARD, or synthetic demo data) behind a cache: 6 hours for a complete day,
+  # 2 minutes for an empty or partial one, failures never. No secrets. Not published.
+  prices:
+    build:
+      context: ./services/prices
+    environment:
+      # smard = live data from smard.de, demo = synthetic CSV (no network needed)
+      - PRICE_SOURCE=${PRICE_SOURCE:-smard}
+    restart: unless-stopped
+    networks:
+      - energy-price-agent
+
+networks:
+  energy-price-agent:
+    name: energy-price-agent
+    driver: bridge

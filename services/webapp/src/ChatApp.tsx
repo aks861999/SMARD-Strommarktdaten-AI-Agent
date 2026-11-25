@@ -4,7 +4,10 @@ import remarkGfm from "remark-gfm";
 import { ChatSurface } from "./renderer";
 import type { A2UIMessage, ChatMessage, UIEvent } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+// Local-development default when VITE_API_BASE_URL is not set. A deployment sets it at build time (on Vercel:
+// the backend's https address). An EMPTY value means "same origin": the Docker setup serves the page and
+// proxies /api from one address, so requests are relative. Hence `??` and not `||`.
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 // Conversation memory is always on: the last 10 question/answer exchanges are sent
 // with every request. Must match MAX_HISTORY_TURNS in energy_agent/agent.py.
 const HISTORY_TURNS = 10;
@@ -264,9 +267,12 @@ export default function ChatApp() {
               });
           // A definite client-side rejection (bad request, unknown/expired job) will not
           // improve by retrying; 408/429 and every 5xx (e.g. a waking server) are retried.
-          if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+          if (response.status >= 400 && response.status < 500 && response.status !== 408) {
             const detail = await response.text();
-            throw new FatalRequestError(`Server error ${response.status}: ${detail.slice(0, 500)}`);
+            let message = detail.slice(0, 500);
+            try { const parsed = JSON.parse(detail); if (typeof parsed.detail === "string") message = parsed.detail; } catch { /* not JSON */ }
+            // 429 = rate limited. Show the server's plain-language reason and do not retry in a loop.
+            throw new FatalRequestError(response.status === 429 ? message : `Server error ${response.status}: ${message}`);
           }
           if (response.ok) jobCreated = true;
           await consumeSSE(response);

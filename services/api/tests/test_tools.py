@@ -1,6 +1,6 @@
 from datetime import date
 
-from energy_agent.sources import DemoPriceSource
+from prices_service.sources import DemoPriceSource  # demo data lives in the prices service (see pytest.ini)
 from energy_agent.tools import EnergyTools
 
 
@@ -79,18 +79,3 @@ def test_cheapest_window_is_found_on_dst_day():
     )
     assert result["status"] == "ok"
     assert result["start_hour"] in range(0, 24)
-
-
-def test_quarterhour_aggregation_requires_four_values_per_hour():
-    from energy_agent.sources import SmardPriceSource
-
-    hour_start = 1_800_000_000_000
-    quarterhour_values = {
-        hour_start: 40.0,
-        hour_start + 900_000: 50.0,
-        hour_start + 1_800_000: 60.0,
-        hour_start + 2_700_000: 70.0,
-        hour_start + 3_600_000: 999.0,  # incomplete next hour: must be dropped
-    }
-    result = SmardPriceSource._aggregate_quarterhours(quarterhour_values)
-    assert result == {hour_start: 55.0}

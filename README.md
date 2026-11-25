@@ -58,25 +58,51 @@ The official A2UI renderer documentation currently describes the shared web core
 
 ## Project layout
 
+Every service lives in its own folder under `services/`, with its own Dockerfile and requirements.
+
 ```text
 .
-├── api.py                  # FastAPI endpoint, SSE, bounded concurrency, cancellation flag
-├── main.py                 # CLI entry point / LLM provider setup
-├── catalog.json            # Versioned chat component catalog manifest
-├── examples/                # Example JSON UI plan (synthetic only)
-├── energy_agent/
-│   ├── agent.py             # Tool loop, dedupe, event emission
-│   ├── genui.py             # Dynamic UI planner, validation, A2UI message assembly
-│   ├── llm.py               # Streaming OpenAI-compatible adapters
-│   ├── tools.py              # Energy tool schemas and deterministic functions
-│   └── sources.py             # Demo and SMARD data sources
-├── frontend/
-│   ├── src/                  # Chat UI + custom A2UI catalog renderer
-│   ├── package.json           # Includes remark-gfm for Markdown tables
-│   └── vite.config.ts
-├── tests/
-└── data/sample_prices.csv
+├── docker-compose.yml          # webapp + api + prices, one command
+├── example.env                 # copy to .env; docker compose and the api read it
+├── render.yaml                 # Render blueprint (the single-service deployment)
+├── pytest.ini                  # one `python -m pytest` runs every service's tests
+├── requirements-dev.txt        # test dependencies for all services
+└── services/
+    ├── api/                    # the agent
+    │   ├── api.py              # FastAPI endpoint, SSE, rate limiting, cancellation
+    │   ├── main.py             # CLI entry point / LLM provider setup
+    │   ├── catalog.json        # Versioned chat component catalog manifest
+    │   ├── energy_agent/
+    │   │   ├── agent.py        # Tool loop, dedupe, event emission
+    │   │   ├── genui.py        # Dynamic UI planner, validation, A2UI message assembly
+    │   │   ├── llm.py          # Streaming OpenAI-compatible adapters
+    │   │   ├── tools.py        # Energy tool schemas and deterministic functions
+    │   │   ├── ratelimit.py    # Per-IP rate limiting
+    │   │   └── sources.py      # PriceSource interface, HTTP client of the prices service
+    │   ├── examples/           # Example JSON UI plan (synthetic only)
+    │   ├── tests/
+    │   ├── Dockerfile
+    │   └── requirements.txt
+    ├── prices/                 # hourly prices behind a cache
+    │   ├── prices_service/
+    │   │   ├── app.py          # GET /prices, GET /health
+    │   │   ├── sources.py      # SMARD and demo sources
+    │   │   └── cache.py        # thread-safe TTL cache
+    │   ├── data/sample_prices.csv
+    │   ├── tests/
+    │   ├── Dockerfile
+    │   └── requirements.txt
+    └── webapp/                 # the React chat UI
+        ├── src/                # Chat UI + custom A2UI catalog renderer
+        ├── docker/nginx.conf.template
+        ├── package.json
+        ├── vite.config.ts
+        └── Dockerfile
 ```
+
+The services share no code at run time. The api asks the prices service for data over HTTP. The one exception is
+the single-service mode (Render, local development): with `PRICES_URL` unset, the api imports the price code from
+`services/prices` in the same checkout, so it needs a full copy of the repository there.
 
 
 ## Quickstart (Windows PowerShell)
@@ -88,9 +114,9 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
-# requirements.txt = runtime only (also used by the Render deployment, includes tzdata for Windows);
-# requirements-dev.txt adds the test dependencies (pytest, httpx2).
-Copy-Item .env.example .env
+# each service has its own requirements.txt (runtime only); requirements-dev.txt installs all of them
+# plus the test dependencies (pytest, httpx2).
+Copy-Item example.env .env
 ```
 
 Edit `.env` and add `NVIDIA_API_KEY` (NVIDIA NIM is the default provider). To use a local llama.cpp server instead, start it and set `LLM_PROVIDER=llama-cpp` in `.env`; the dashboard has no provider selector.
@@ -98,13 +124,13 @@ Edit `.env` and add `NVIDIA_API_KEY` (NVIDIA NIM is the default provider). To us
 Start the backend:
 
 ```powershell
-python -m uvicorn api:app --host 127.0.0.1 --port 8000
+python -m uvicorn api:app --app-dir services/api --host 127.0.0.1 --port 8000
 ```
 
 ### 2. React chat frontend (second terminal)
 
 ```powershell
-cd frontend
+cd services/webapp
 npm install
 npm run dev
 ```
@@ -124,15 +150,15 @@ Restart the backend. Synthetic demo values are labelled in tool results; don't t
 ### 4. CLI remains available
 
 ```powershell
-python main.py --provider nvidia --data smard
+python services/api/main.py --provider nvidia --data smard
 # or
-python main.py --provider llama-cpp --data demo
+python services/api/main.py --provider llama-cpp --data demo
 ```
 
 ### 5. Python tests
 
 ```powershell
-python -m pytest -q
+python -m pytest -q        # every service, from the repository root
 ```
 
 
@@ -151,8 +177,17 @@ python -m pytest -q
 | `AGENT_MAX_STEPS` | `0` | Optional iteration-count ceiling; `0` means no count limit |
 | `AGENT_MAX_RUNTIME_SECONDS` | `900` | Runtime safety limit; `0` disables it |
 | `MAX_CONCURRENT_AGENT_RUNS` | `2` | Backend concurrency slots |
+| `RATE_LIMIT_PER_MINUTE` | `6` | New questions allowed per client IP per minute; `0` = off |
+| `RATE_LIMIT_PER_HOUR` | `60` | New questions allowed per client IP per hour; `0` = off |
+| `RATE_LIMIT_GLOBAL_PER_HOUR` | `300` | New questions per hour across all clients (a backstop that faking an IP cannot dodge); `0` = off |
+| `RATE_LIMIT_MAX_ACTIVE_PER_IP` | `1` | Runs one client may have going at once (a stopped run does not count); `0` = off |
+| `CLIENT_IP_HEADER` | unset | Header holding the visitor IP behind a proxy, e.g. `cf-connecting-ip`; unset = use the connection address |
+| `TRUSTED_PROXY_HOPS` | `1` | Only with `CLIENT_IP_HEADER=x-forwarded-for`: how many trusted proxies sit in front of the app |
 | `CHAT_CORS_ORIGINS` | local Vite origins | Comma-separated browser origins |
-| `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Frontend API endpoint; set in `frontend/.env.local` if needed |
+| `VITE_API_BASE_URL` | `http://127.0.0.1:8000` | Frontend API endpoint, read at build time; set in `services/webapp/.env.local` if needed. Empty means same origin (the Docker setup) |
+| `PRICES_URL` | unset | Address of the prices service. Set = the API gets prices from it (Docker); unset = the API fetches them itself |
+| `WEBAPP_PORT` | `8080` | Docker only: host port for the webapp service |
+| `WEBAPP_API_URL` | `http://api:8000` | Docker only: the API that nginx forwards `/api` to |
 
 
 ### Data and DST
@@ -173,6 +208,36 @@ Conversation messages are held in React component state only while the page rema
 - A2UI messages and custom catalog are validated by the project's own code/tests, not by the official A2UI schema validator. Before deploying beyond localhost, pin and integrate the official schemas/renderer or expand the integration tests.
 
 
+## Run everything with Docker (three services)
+
+```text
+browser ──► webapp (nginx) ──► api (agent) ──► prices (SMARD + cache) ──► smard.de
+              page + /api          │
+              proxy                └──► NVIDIA API
+```
+
+| Service | Folder | What it does | Reachable from |
+|---|---|---|---|
+| `webapp` | `services/webapp` | nginx: serves the built React app and forwards `/api` to `api`, with streaming-safe settings | your machine, port 8080 (the only published port) |
+| `api` | `services/api` | The agent loop, the four tools, the live stream, rate limiting and the UI planner. It alone gets `NVIDIA_API_KEY` | inside the stack only |
+| `prices` | `services/prices` | Fetches SMARD (or demo) prices and caches them: 6 hours for a complete day, 2 minutes for an empty or partial one, failures never. Holds no secrets | inside the stack only |
+
+```bash
+cp example.env .env             # then put your NVIDIA_API_KEY in .env
+docker compose up --build       # first build takes a few minutes
+# open http://localhost:8080
+```
+
+- Use synthetic prices without the SMARD website: `PRICE_SOURCE=demo docker compose up --build`.
+- Another port: `WEBAPP_PORT=9000 docker compose up --build`.
+- Look around: `docker compose ps`, `docker compose logs -f api`, `curl http://localhost:8080/healthz`.
+- Stop: `docker compose down`.
+- The page and `/api` share one address, so no CORS setup is needed. nginx tells `api` the visitor's address (`X-Forwarded-For`), which the rate limiter uses.
+- compose hands `api` only the variables it lists (not the whole `.env`), and the containers run as an unprivileged user. `.env` is never copied into an image.
+- The optional local model (llama.cpp) is not part of this stack.
+- This stack is for running on your own machine or a server you control. The Render and Vercel deployment below is separate: there the API fetches prices itself, because `PRICES_URL` is not set.
+- On Windows with Docker inside WSL, run the commands from a WSL shell (the project is at `/mnt/d/...`).
+
 ## Deployment: backend on Render (free), frontend on Vercel
 
 The backend is a long-lived FastAPI process (SSE streaming, in-memory jobs), so it needs a host that runs one, not Streamlit or serverless functions. `render.yaml` defines the free Render web service.
@@ -180,13 +245,13 @@ The backend is a long-lived FastAPI process (SSE streaming, in-memory jobs), so 
 **1. Push the project folder to GitHub** (the repository root must be this folder; `.env` is git-ignored, never commit it).
 
 **2. Backend on Render**
-1. Render dashboard → **New → Blueprint** → select the repository. Render reads `render.yaml`.
+1. Render dashboard → **New → Blueprint** → select the repository. Render reads `render.yaml`: it builds the whole repository and starts the api from `services/api`, with the price code running inside it.
 2. When asked, enter `NVIDIA_API_KEY` and `CHAT_CORS_ORIGINS`. For now put a placeholder origin; you set the real one in step 4.
 3. Wait for the deploy and open `https://<your-service>.onrender.com/api/health`; it should return `{"status":"ok",...}`.
 
 **3. Frontend on Vercel**
 1. **Add New → Project** → import the same repository.
-2. Set **Root Directory** to `frontend`. Vercel detects Vite (build `npm run build`, output `dist`).
+2. Set **Root Directory** to `services/webapp`. Vercel detects Vite (build `npm run build`, output `dist`).
 3. Add the environment variable `VITE_API_BASE_URL` = your Render URL, `https://<your-service>.onrender.com` (no trailing slash). It is applied at build time, so redeploy after changing it.
 
 **4. Connect them**: in Render, set `CHAT_CORS_ORIGINS` to your Vercel URL, e.g. `https://your-app.vercel.app` (no trailing slash, `https`; several origins can be comma-separated). Render redeploys automatically. Each Vercel *preview* URL is a different origin and must be added too if you want to use it.
@@ -195,14 +260,25 @@ The backend is a long-lived FastAPI process (SSE streaming, in-memory jobs), so 
 - The service sleeps after about 15 minutes without traffic and needs up to a minute to wake. The frontend pings `/api/health` when the page opens and retries a failed first message for roughly 70 seconds, showing "Connecting to the server… it may be waking up".
 - Render may restart a free service at any time. Running jobs and the replay log live in memory, so a restart during an answer loses that answer; the user just asks again. Conversation history lives in the browser, so it survives.
 - Free-tier terms change; check Render's pricing page before relying on them.
-- **There is no authentication.** Anyone who finds the backend URL can spend your NVIDIA quota. `MAX_CONCURRENT_AGENT_RUNS` caps parallel runs but is not a rate limit. Add auth or per-IP rate limiting before sharing the URL widely.
+- **There is no login, but new questions are rate limited** (next section). That protects your NVIDIA quota; it does not identify users, and the counters live in memory, so a restart resets them.
+
+### Rate limiting
+
+Every new question starts an agent run that spends NVIDIA quota, so `POST /api/chat` is limited:
+
+- **Per client IP:** 6 new questions a minute and 60 an hour, and one running question at a time (a stopped run does not count).
+- **All clients together:** 300 an hour. This backstop cannot be dodged by faking an address.
+- Going over returns HTTP 429 with a `Retry-After` header, and the chat shows the reason ("Too many questions from your network. Please wait N seconds and try again."). Resuming a dropped stream (same `request_id`) is never counted.
+- Change or switch off any limit with the `RATE_LIMIT_*` variables in the table above.
+
+**Which address is "the client"?** Behind Render's proxy the connection address is the proxy's, so without help all visitors would share one allowance. `render.yaml` sets `CLIENT_IP_HEADER=cf-connecting-ip`. Render does not document that header, so check it on your own deployment: open the app, ask one question, and read the Render log. The line `chat accepted ip=203.0.113.9 via=cf-connecting-ip` should show your public IP. If it says `via=peer`, the header is absent: try `CLIENT_IP_HEADER=x-forwarded-for` (with `TRUSTED_PROXY_HOPS=1` it uses the last entry, the one Render appended), or rely on the global limit. The leftmost `X-Forwarded-For` value is never used, because Render does not remove one sent by a client, so it can be forged. If clients can set the named header themselves, a determined visitor can dodge the per-IP limit but never the global one.
 
 ## Extending the UI catalog
 
-1. Add a component definition to `catalog.json`.
-2. Add its shape, bounds, and safety validation in `energy_agent/genui.py`.
+1. Add a component definition to `services/api/catalog.json`.
+2. Add its shape, bounds, and safety validation in `services/api/energy_agent/genui.py`.
 3. Add conversion to the A2UI-style `updateComponents` list in `ui_tree_to_a2ui`.
-4. Implement the matching React component in `frontend/src/renderer.tsx`.
+4. Implement the matching React component in `services/webapp/src/renderer.tsx`.
 5. Add validation and rendering tests. Do not add generated executable JS or arbitrary HTML.
 
 
