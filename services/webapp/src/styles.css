@@ -40,6 +40,48 @@ button, input, textarea { font: inherit; }button { cursor: pointer; touch-action
 .welcome-icon { margin: 0 auto 22px; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 18px; background: #253652; font-size: 24px; }
 .welcome h1 { font-size: clamp(25px, 4vw, 38px); line-height: 1.2; letter-spacing: -.045em; font-weight: 650; margin: 0; }
 .welcome p { color: var(--muted); font-size: 14px; margin: 18px 0 30px; }
+/* Architecture overview banner on the welcome screen: a row of blocks joined by arrows (stacked on phones). */
+.welcome .arch-banner { margin: 0 0 34px; padding: 16px 18px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); text-align: left; }
+.arch-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.arch-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.arch-close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; }
+.arch-close:hover { background: var(--panel-hover); color: var(--text); }
+.arch-flow { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; gap: 0; }
+.arch-node { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-soft); text-align: center; }
+.arch-icon { font-size: 20px; line-height: 1; }
+.arch-title { font-size: 13px; font-weight: 650; }
+.arch-caption { font-size: 12px; line-height: 1.35; color: var(--muted); }
+.arch-arrow { flex: 0 0 22px; display: grid; place-items: center; color: var(--accent); }
+.arch-arrow::before { content: "→"; font-size: 16px; }
+.arch-return { margin: 12px 0 0; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 10px; color: var(--muted); font-size: 12px; line-height: 1.4; text-align: center; }
+.welcome .arch-return { margin: 12px 0 0; font-size: 12px; }
+.arch-reopen { display: inline-flex; align-items: center; min-height: 36px; margin: 0 0 22px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; }
+.arch-reopen:hover { background: var(--panel-hover); color: var(--text); }
+/* Technical-details view of the banner: services, agent loop, delivery lanes, guardrails. */
+.arch-head-actions { display: flex; align-items: center; gap: 6px; }
+.arch-toggle { min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.arch-toggle:hover { background: var(--accent-soft); }
+.arch-details { display: grid; gap: 12px; }
+.arch-panel { padding: 12px 12px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-soft); }
+.arch-panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; }
+.arch-panel h3 small { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.arch-services { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; }
+.arch-service { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.arch-svc-name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; font-weight: 650; color: var(--accent); }
+.arch-svc-role { font-size: 12px; font-weight: 600; }
+.arch-out { margin-top: auto; padding-top: 6px; color: var(--green); font-size: 12px; line-height: 1.35; }
+.arch-lane-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
+.arch-lane-label { flex: 0 0 82px; color: var(--muted); font-size: 12px; }
+.arch-lane { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; flex: 1 1 280px; min-width: 0; }
+.arch-step { flex: 1 1 0; min-width: 0; display: grid; place-items: center; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 12px; line-height: 1.3; text-align: center; }
+.arch-step-arrow { flex: 0 0 18px; display: grid; place-items: center; color: var(--accent); }
+.arch-step-arrow::before { content: "→"; font-size: 14px; }
+.arch-loop-note { color: var(--muted); font-size: 12px; }
+.arch-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.arch-chip { padding: 3px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.arch-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.welcome .arch-note { margin: 0; font-size: 12px; }
+.arch-guards { margin: 0 0 8px; padding: 0 0 0 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 18px; font-size: 12px; line-height: 1.4; }
 /* 2x2 grid whose cards run clockwise: 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left. */
 .example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 auto; }
 .example-grid .example-card:nth-child(1) { grid-area: 1 / 1; }
@@ -167,6 +209,24 @@ button, input, textarea { font: inherit; }button { cursor: pointer; touch-action
   .conversation { padding: 18px max(13px, env(safe-area-inset-right)) 30px max(13px, env(safe-area-inset-left)); }
   .welcome { margin-top: 20px; }
   .welcome p { margin: 14px 0 22px; }
+  .welcome .arch-banner { margin-bottom: 24px; padding: 14px 14px 12px; }
+  .arch-close { width: 40px; height: 40px; margin: -4px -6px -4px 0; }
+  .arch-reopen { min-height: 40px; }
+  .arch-head { align-items: flex-start; flex-wrap: wrap; }
+  .arch-toggle { min-height: 40px; }
+  .arch-services, .arch-lane { flex-direction: column; }
+  .arch-lane-label { flex-basis: 100%; }
+  .arch-lane { flex-basis: 100%; }
+  .arch-step { padding: 9px 10px; font-size: 13px; }
+  .arch-step-arrow { flex-basis: 18px; }
+  .arch-step-arrow::before { content: "↓"; }
+  .arch-guards { grid-template-columns: 1fr; font-size: 13px; }
+  .arch-chip { font-size: 12px; padding: 4px 8px; }
+  .arch-flow { flex-direction: column; }
+  .arch-node { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; column-gap: 10px; text-align: left; padding: 10px 12px; }
+  .arch-node .arch-caption { flex-basis: 100%; padding-left: 30px; font-size: 13px; }
+  .arch-arrow { flex-basis: 20px; }
+  .arch-arrow::before { content: "↓"; }
   .example-grid { grid-template-columns: 1fr; gap: 10px; }
   .example-grid .example-card:nth-child(n) { grid-area: auto; }
   .message { gap: 9px; margin-bottom: 20px; }
