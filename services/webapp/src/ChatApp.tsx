@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent, ChangeEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import ArchitectureBanner from "./ArchitectureBanner";
 import { ChatSurface } from "./renderer";
 import type { A2UIMessage, ChatMessage, UIEvent } from "./types";
 
@@ -354,6 +355,7 @@ export default function ChatApp() {
       </header>
       <section className="conversation">
         {messages.length === 0 ? <div className="welcome">
+          <ArchitectureBanner />
           <div className="welcome-icon">⚡</div><h1>What can I help you<br/>understand today?</h1>
           <p>Ask about energy prices, operating windows, costs or market data.</p>
           <div className="example-grid">
